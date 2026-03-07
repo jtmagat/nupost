@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NUPost – Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;300;400;700&family=Arimo:wght@400&display=swap" rel="stylesheet" />
+
+  <style>
+    /* =============================================
+       DESIGN TOKENS
+    ============================================= */
+    :root {
+      /* Colors */
+      --color-primary:        #002366;
+      --color-white:          #ffffff;
+      --color-black:          #000000;
+      --color-input-border:   rgba(0, 0, 0, 0.5);
+      --color-placeholder:    rgba(10, 10, 10, 0.5);
+
+      /* Typography */
+      --font-inter:   'Inter', sans-serif;
+      --font-arimo:   'Arimo', sans-serif;
+
+      --fs-label:     12px;
+      --fs-placeholder: 12px;
+      --fs-password-dots: 16px;
+      --fs-button:    12px;
+
+      --fw-light:     300;
+      --fw-regular:   400;
+      --fw-thin:      100;
+      --fw-bold:      700;
+
+      --lh-label:     18px;
+      --lh-button:    18px;
+
+      /* Spacing */
+      --sp-32:        32px;
+      --sp-24:        24px;
+      --sp-12:        12px;
+      --sp-8:         8px;
+
+      /* Border radius */
+      --radius-card:  8px;
+      --radius-input: 5px;
+      --radius-btn:   5px;
+
+      /* Shadows */
+      --shadow-card:
+        0px 10px 15px 0px rgba(0, 0, 0, 0.1),
+        0px  4px  6px 0px rgba(0, 0, 0, 0.1);
+
+      /* Layout */
+      --card-width:   448px;
+      --card-height:  502px;
+    }
+
+    /* =============================================
+       RESET & BASE
+    ============================================= */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      font-family: var(--font-inter);
+      background: var(--color-white);
+    }
+
+    /* =============================================
+       LAYOUT
+    ============================================= */
+    .login {
+      position: relative;
+      width: 100%;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Background image – matches Figma: 1920×1280, offset -88 / -336 */
+    .login__bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+    }
+
+    .login__bg img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center center;
+      display: block;
+      pointer-events: none;
+    }
+
+    /* =============================================
+       CARD
+    ============================================= */
+    .login__card {
+      position: relative;
+      z-index: 1;
+      background: var(--color-white);
+      width: var(--card-width);
+      min-height: var(--card-height);
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow-card);
+      padding: var(--sp-32);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* =============================================
+       LOGO AREA
+    ============================================= */
+    .login__logo {
+      width: 209px;
+      height: 139px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-bottom: 24px;    /* top:195 - top:32 - height:139 = 24px gap */
+    }
+
+    .login__logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    /* =============================================
+       FORM
+    ============================================= */
+    .login__form {
+      width: 100%;         /* 384 / 448 → full inside padding */
+      display: flex;
+      flex-direction: column;
+      gap: var(--sp-24);
+    }
+
+    /* Field wrapper */
+    .login__field {
+      display: flex;
+      flex-direction: column;
+      gap: var(--sp-8);
+      width: 100%;
+    }
+
+    /* Label */
+    .login__label {
+      display: block;
+      font-family: var(--font-inter);
+      font-weight: var(--fw-light);
+      font-size: var(--fs-label);
+      line-height: var(--lh-label);
+      color: var(--color-black);
+      font-style: normal;
+      white-space: nowrap;
+      height: 18px;
+    }
+
+    /* Input */
+    .login__input {
+      width: 100%;
+      height: 44px;
+      border: 1px solid var(--color-input-border);
+      border-radius: var(--radius-input);
+      padding: 0 var(--sp-12);
+      font-family: var(--font-inter);
+      font-weight: var(--fw-thin);
+      font-size: var(--fs-placeholder);
+      color: var(--color-placeholder);
+      background: var(--color-white);
+      outline: none;
+      appearance: none;
+      -webkit-appearance: none;
+      transition: border-color 0.2s;
+    }
+
+    .login__input::placeholder {
+      font-family: var(--font-inter);
+      font-weight: var(--fw-thin);
+      font-size: var(--fs-placeholder);
+      color: var(--color-placeholder);
+    }
+
+    .login__input--password {
+      font-family: var(--font-arimo);
+      font-weight: var(--fw-regular);
+      font-size: var(--fs-password-dots);
+      letter-spacing: 2px;
+    }
+
+    .login__input--password::placeholder {
+      font-family: var(--font-arimo);
+      font-weight: var(--fw-regular);
+      font-size: var(--fs-password-dots);
+      letter-spacing: 2px;
+      color: var(--color-placeholder);
+    }
+
+    .login__input:focus {
+      border-color: var(--color-primary);
+    }
+
+    /* Button */
+    .login__button {
+      display: block;
+      width: 100%;
+      height: 39px;
+      background: var(--color-primary);
+      color: var(--color-white);
+      border: none;
+      border-radius: var(--radius-btn);
+      font-family: var(--font-inter);
+      font-weight: var(--fw-bold);
+      font-size: var(--fs-button);
+      line-height: var(--lh-button);
+      letter-spacing: 0.04em;
+      text-align: center;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s, opacity 0.2s;
+    }
+
+    .login__button:hover {
+      opacity: 0.9;
+    }
+
+    .login__button:active {
+      opacity: 0.8;
+    }
+
+    /* =============================================
+       RESPONSIVE — TABLET (≤1024px)
+    ============================================= */
+    @media (max-width: 1024px) {
+      .login__card {
+        width: 90%;
+        max-width: var(--card-width);
+      }
+    }
+
+    /* =============================================
+       RESPONSIVE — MOBILE (≤768px)
+    ============================================= */
+    @media (max-width: 768px) {
+      .login__card {
+        width: 92%;
+        min-height: unset;
+        padding: 28px 24px;
+      }
+
+      .login__logo {
+        width: 160px;
+        height: 107px;
+        margin-bottom: 20px;
+      }
+    }
+
+    @media (max-width: 400px) {
+      .login__card {
+        width: 96%;
+        padding: 24px 20px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <main class="login" role="main">
+
+    <!-- Background photo -->
+    <div class="login__bg" aria-hidden="true">
+      <img
+        src="https://www.figma.com/api/mcp/asset/d92a1819-1c4b-478b-9908-30756cb9459c"
+        alt="NU Lipa campus building exterior"
+      />
+    </div>
+
+    <!-- Login card -->
+    <section class="login__card" aria-label="Login">
+
+      <!-- Logo -->
+      <div class="login__logo">
+        <img
+          src="https://www.figma.com/api/mcp/asset/dcc9037c-7f66-45e1-bfc1-87ca9285df64"
+          alt="NUPost logo"
+        />
+      </div>
+
+      <!-- Form -->
+      <form class="login__form" action="#" method="post" novalidate>
+
+        <!-- Email field -->
+        <div class="login__field">
+          <label class="login__label" for="email">EMAIL ADDRESS:</label>
+          <input
+            class="login__input"
+            id="email"
+            type="email"
+            name="email"
+            placeholder="your.email@nu-lipa.edu.ph"
+            autocomplete="email"
+            required
+          />
+        </div>
+
+        <!-- Password field -->
+        <div class="login__field">
+          <label class="login__label" for="password">PASSWORD:</label>
+          <input
+            class="login__input login__input--password"
+            id="password"
+            type="password"
+            name="password"
+            placeholder="••••••••"
+            autocomplete="current-password"
+            required
+          />
+        </div>
+
+        <!-- Submit -->
+        <button class="login__button" type="submit">LOGIN</button>
+
+      </form>
+    </section>
+
+  </main>
+
+  <script>
+    // Minimal JS — no extra features beyond what is in the Figma design.
+    // Form submit prevention (placeholder behaviour).
+    document.querySelector('.login__form').addEventListener('submit', function (e) {
+      e.preventDefault();
+    });
+  </script>
+
+</body>
+</html>s
