@@ -75,9 +75,9 @@ $result = mysqli_query($conn, "SELECT * FROM requests WHERE $where ORDER BY crea
     <ul>
         <li onclick="location.href='index.php'">Dashboard</li>
         <li class="active">Request Management</li>
-        <li>Scheduling</li>
-        <li>Analytics</li>
-        <li>Reports</li>
+         <li onclick="location.href='scheduling_calendar.php'">Scheduling & Calendar</li>
+       <li onclick="location.href='analytics.php'">Analytics</li>
+     <li onclick="location.href='reports.php'">Reports</li>
         <li>Settings</li>
     </ul>
 </div>

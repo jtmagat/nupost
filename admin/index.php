@@ -39,19 +39,36 @@ if (!$recent) {
         /* SIDEBAR */
         .sidebar{width:240px;background:linear-gradient(180deg,#003366,#0059b3);color:white;padding:20px;}
         .sidebar .logo {
-    font-size: 28px;
-    font-weight: bold;
-    margin-bottom: 30px;
-    color: white;
-    text-align: center;
-}
-
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 30px;
+            color: white;
+            text-align: center;
+        }
         .sidebar ul{list-style:none;}
         .sidebar li{padding:12px;border-radius:6px;margin-bottom:8px;cursor:pointer;}
         .sidebar li:hover,.sidebar li.active{background:rgba(255,255,255,0.15);}
         /* MAIN */
         .main{flex:1;display:flex;flex-direction:column;}
-        .topbar{background:white;padding:15px 25px;box-shadow:0 1px 6px rgba(0,0,0,0.05);}
+        .topbar{
+            background:white;
+            padding:15px 25px;
+            box-shadow:0 1px 6px rgba(0,0,0,0.05);
+            display:flex;
+            justify-content: space-between;
+            align-items:center;
+        }
+        .topbar h2{margin:0;}
+        .logout-btn{
+            background:#ff4d4f;
+            color:white;
+            padding:8px 16px;
+            border:none;
+            border-radius:6px;
+            cursor:pointer;
+            text-decoration:none;
+            font-weight:bold;
+        }
         .content{padding:25px;}
         /* CARDS */
         .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;margin-bottom:25px;}
@@ -72,21 +89,21 @@ if (!$recent) {
 <body>
 
 <div class="sidebar">
-    <div class="logo" style="font-size:28px;font-weight:bold;margin-bottom:30px;color:white;">NUPost</div>
+    <div class="logo">NUPost</div>
     <ul>
-        <li class="active">Dashboard</li>
+         <li class="active">Dashboard</li>
         <li onclick="location.href='request_management.php'">Request Management</li>
-        <li>Scheduling</li>
-        <li>Analytics</li>
-        <li>Reports</li>
+         <li onclick="location.href='scheduling_calendar.php'">Scheduling & Calendar</li>
+       <li onclick="location.href='analytics.php'">Analytics</li>
+        <li onclick="location.href='reports.php'">Reports</li>
         <li>Settings</li>
     </ul>
 </div>
 
-
 <div class="main">
     <div class="topbar">
         <h2>Admin Dashboard</h2>
+        <a href="http://localhost/NUPost/admin/login.php" class="logout-btn">Logout</a>
     </div>
 
     <div class="content">
