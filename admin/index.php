@@ -103,7 +103,7 @@ if (!$recent) {
 <div class="main">
     <div class="topbar">
         <h2>Admin Dashboard</h2>
-        <a href="http://localhost/NUPost/admin/login.php" class="logout-btn">Logout</a>
+        <a href="http://localhost/NUPost/auth/login.php" class="logout-btn">Logout</a>
     </div>
 
     <div class="content">
