@@ -3,7 +3,7 @@ session_start();
 header('Content-Type: application/json');
 
 
-$apiKey = "AIzaSyArHoZJF6MQcWWDb8kTI6zxMzcYzLU7d-k";
+$apiKey = "AIzaSyB4EL_Wji6fvqVLYQ40vi6QkpWfVA-OWP4"; // Replace with your actual API key
 // =============================================
 
 $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=" . $apiKey;
