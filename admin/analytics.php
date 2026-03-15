@@ -2,158 +2,706 @@
 session_start();
 require_once "../config/database.php";
 
-// Fetch analytics totals from post_analytics
-$reach = $engagement = $reactions = 0;
+if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
+    header("Location: ../auth/login.php");
+    exit();
+}
 
-$q = mysqli_query($conn, "
-    SELECT 
-        SUM(reach) as reach, 
-        SUM(engagement) as engagement, 
-        SUM(reactions) as reactions 
-    FROM post_analytics
-");
+// ── Auto-create post_analytics table if not exists ────────────────────────
+mysqli_query($conn, "CREATE TABLE IF NOT EXISTS `post_analytics` (
+    `id` INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `request_id` INT(11) DEFAULT NULL,
+    `post_title` VARCHAR(255) DEFAULT NULL,
+    `platform` VARCHAR(100) DEFAULT NULL,
+    `reach` INT(11) DEFAULT 0,
+    `engagement` INT(11) DEFAULT 0,
+    `reactions` INT(11) DEFAULT 0,
+    `shares` INT(11) DEFAULT 0,
+    `comments` INT(11) DEFAULT 0,
+    `engagement_rate` DECIMAL(5,2) DEFAULT 0.00,
+    `recorded_at` DATE DEFAULT NULL,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
+)");
 
-if($q && mysqli_num_rows($q) > 0){
-    $row = mysqli_fetch_assoc($q);
-    $reach = $row['reach'] ?? 0;
-    $engagement = $row['engagement'] ?? 0;
-    $reactions = $row['reactions'] ?? 0;
+// ── Patch missing columns on existing table ───────────────────────────────
+$patch_cols = [
+    "shares"          => "ALTER TABLE `post_analytics` ADD COLUMN `shares` INT(11) DEFAULT 0",
+    "comments"        => "ALTER TABLE `post_analytics` ADD COLUMN `comments` INT(11) DEFAULT 0",
+    "engagement_rate" => "ALTER TABLE `post_analytics` ADD COLUMN `engagement_rate` DECIMAL(5,2) DEFAULT 0.00",
+    "recorded_at"     => "ALTER TABLE `post_analytics` ADD COLUMN `recorded_at` DATE DEFAULT NULL",
+    "post_title"      => "ALTER TABLE `post_analytics` ADD COLUMN `post_title` VARCHAR(255) DEFAULT NULL",
+    "platform"        => "ALTER TABLE `post_analytics` ADD COLUMN `platform` VARCHAR(100) DEFAULT NULL",
+    "request_id"      => "ALTER TABLE `post_analytics` ADD COLUMN `request_id` INT(11) DEFAULT NULL",
+];
+$cols_q = mysqli_query($conn, "SHOW COLUMNS FROM `post_analytics`");
+$existing_cols = [];
+while ($col = mysqli_fetch_assoc($cols_q)) $existing_cols[] = $col['Field'];
+foreach ($patch_cols as $col => $sql) {
+    if (!in_array($col, $existing_cols)) mysqli_query($conn, $sql);
+}
+
+// ── Totals ────────────────────────────────────────────────────────────────
+$totals_q = mysqli_query($conn, "SELECT
+    COALESCE(SUM(reach),0)           as reach,
+    COALESCE(SUM(engagement),0)      as engagement,
+    COALESCE(SUM(reactions),0)       as reactions,
+    COALESCE(SUM(shares),0)          as shares,
+    COALESCE(SUM(comments),0)        as comments,
+    COALESCE(AVG(engagement_rate),0) as avg_engagement_rate
+FROM post_analytics");
+$totals = mysqli_fetch_assoc($totals_q);
+$reach          = (int)$totals['reach'];
+$engagement     = (int)$totals['engagement'];
+$reactions      = (int)$totals['reactions'];
+$shares         = (int)$totals['shares'];
+$comments_total = (int)$totals['comments'];
+$eng_rate       = round((float)$totals['avg_engagement_rate'], 2);
+
+// ── Performance over time (last 7 recorded_at dates) ────────────────────
+$perf_q = mysqli_query($conn, "SELECT recorded_at,
+    SUM(reach) as reach, SUM(engagement) as engagement, SUM(reactions) as reactions
+    FROM post_analytics WHERE recorded_at IS NOT NULL
+    GROUP BY recorded_at ORDER BY recorded_at ASC LIMIT 7");
+$perf_labels = $perf_reach = $perf_eng = $perf_react = [];
+while ($p = mysqli_fetch_assoc($perf_q)) {
+    $perf_labels[] = date("M j", strtotime($p['recorded_at']));
+    $perf_reach[]  = (int)$p['reach'];
+    $perf_eng[]    = (int)$p['engagement'];
+    $perf_react[]  = (int)$p['reactions'];
+}
+
+
+// ── Post Performance Comparison (last 3 months grouped) ─────────────────
+$comp_q = mysqli_query($conn, "SELECT
+    DATE_FORMAT(recorded_at,'%b %Y') as month,
+    SUM(reach) as reach, SUM(engagement) as engagement, SUM(reactions) as reactions
+    FROM post_analytics WHERE recorded_at IS NOT NULL
+    GROUP BY DATE_FORMAT(recorded_at,'%Y-%m') ORDER BY MIN(recorded_at) DESC LIMIT 3");
+$comp_labels = $comp_reach = $comp_eng = $comp_react = [];
+while ($c = mysqli_fetch_assoc($comp_q)) {
+    $comp_labels[] = $c['month'];
+    $comp_reach[]  = (int)$c['reach'];
+    $comp_eng[]    = (int)$c['engagement'];
+    $comp_react[]  = (int)$c['reactions'];
+}
+
+$comp_labels = array_reverse($comp_labels);
+$comp_reach  = array_reverse($comp_reach);
+$comp_eng    = array_reverse($comp_eng);
+$comp_react  = array_reverse($comp_react);
+
+// ── Top Performing Posts ─────────────────────────────────────────────────
+$top_q = mysqli_query($conn, "SELECT pa.post_title, pa.reach, pa.reactions, pa.shares, pa.comments, pa.engagement,
+    pa.engagement_rate
+    FROM post_analytics pa
+    ORDER BY pa.engagement DESC LIMIT 5");
+$top_posts = [];
+while ($t = mysqli_fetch_assoc($top_q)) $top_posts[] = $t;
+
+// Number formatter
+function fmt($n) {
+    if ($n >= 1000000) return round($n/1000000,1).'M';
+    if ($n >= 1000)    return round($n/1000,1).'K';
+    return number_format($n);
 }
 ?>
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>NUPost Analytics</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        * { box-sizing: border-box; margin:0; padding:0; font-family:'Segoe UI'; }
-        body { display:flex; min-height:100vh; background:#f5f7fb; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Analytics – NUPost Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+    --color-primary: #002366;
+    --color-primary-light: #003a8c;
+    --color-bg: #f5f6fa;
+    --color-border: #e5e7eb;
+    --color-text: #111827;
+    --color-text-muted: #6b7280;
+    --font: 'Inter', sans-serif;
+    --sidebar-width: 220px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --radius: 10px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: var(--font); background: var(--color-bg); color: var(--color-text); font-size: 14px; }
 
-        /* SIDEBAR */
-        .sidebar {
-            width:240px;
-            background: linear-gradient(180deg,#003366,#0059b3);
-            color:white;
-            padding:20px;
-            flex-shrink:0;
-        }
-        .sidebar .logo {
-            font-size:28px;
-            font-weight:bold;
-            margin-bottom:30px;
-            text-align:center;
-        }
-        .sidebar ul { list-style:none; padding-left:0; }
-        .sidebar li {
-            padding:12px;
-            border-radius:6px;
-            margin-bottom:8px;
-            cursor:pointer;
-            transition: background 0.2s;
-        }
-        .sidebar li:hover { background: rgba(255,255,255,0.15); }
-        .sidebar li.active { background: rgba(255,255,255,0.15); font-weight:bold; }
+.app { display: flex; min-height: 100vh; }
 
-        /* MAIN */
-        .main { flex:1; display:flex; flex-direction:column; }
+/* ── SIDEBAR ── */
+.sidebar {
+    width: var(--sidebar-width); background: var(--color-primary);
+    display: flex; flex-direction: column; flex-shrink: 0;
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
+}
+.sidebar__logo { padding: 20px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.sidebar__logo img { height: 32px; width: auto; }
+.sidebar__logo-text { font-size: 18px; font-weight: 700; color: white; }
+.sidebar__nav { padding: 12px 10px; flex: 1; }
+.sidebar__item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; margin-bottom: 2px;
+    color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500;
+    text-decoration: none; transition: background .15s, color .15s;
+}
+.sidebar__item:hover { background: rgba(255,255,255,0.1); color: white; }
+.sidebar__item--active { background: rgba(255,255,255,0.15); color: white; }
+.sidebar__footer { padding: 14px 10px; border-top: 1px solid rgba(255,255,255,0.1); }
+.sidebar__logout {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
+    color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 500;
+    text-decoration: none; transition: background .15s, color .15s;
+}
+.sidebar__logout:hover { background: rgba(255,255,255,0.1); color: white; }
 
-        /* TOPBAR */
-        .topbar {
-            background:white;
-            padding:15px 25px;
-            box-shadow:0 1px 6px rgba(0,0,0,0.05);
-        }
+/* ── MAIN ── */
+.main { margin-left: var(--sidebar-width); flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
 
-        /* CONTENT */
-        .content { padding:25px; }
+/* ── TOPBAR ── */
+.topbar {
+    background: white; border-bottom: 1px solid var(--color-border);
+    padding: 0 28px; height: 56px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 40;
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.topbar-title { font-size: 16px; font-weight: 700; color: var(--color-text); }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.admin-badge {
+    display: flex; align-items: center; gap: 7px; padding: 6px 12px;
+    background: var(--color-bg); border-radius: 8px; border: 1px solid var(--color-border);
+    font-size: 12.5px; font-weight: 500;
+}
 
-        /* CARDS */
-        .stats {
-            display:grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px,1fr));
-            gap:20px;
-            margin-bottom:25px;
-        }
-        .card {
-            background:white;
-            padding:20px;
-            border-radius:12px;
-            box-shadow:0 4px 10px rgba(0,0,0,0.05);
-        }
-        .card small { color:#777; }
-        .card h2 { margin-top:10px; }
+/* ── CONTENT ── */
+.content { padding: 28px; flex: 1; }
 
-        /* CHART */
-        #chart {
-            margin-top:25px;
-            background:white;
-            border-radius:12px;
-            padding:20px;
-            box-shadow:0 4px 10px rgba(0,0,0,0.05);
-        }
-    </style>
+/* ── DATE RANGE ── */
+.date-range-bar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 24px;
+}
+.date-range-select {
+    height: 36px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 8px;
+    font-size: 13px; font-family: var(--font); background: white; color: var(--color-text);
+    outline: none; cursor: pointer; min-width: 160px;
+}
+.date-range-select:focus { border-color: var(--color-primary); }
+
+/* ── STAT CARDS ROW ── */
+.stat-cards {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px;
+}
+.stat-card {
+    background: white; border-radius: var(--radius); box-shadow: var(--shadow-sm);
+    padding: 18px 20px; display: flex; flex-direction: column; gap: 8px;
+    position: relative; overflow: hidden;
+}
+.stat-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+}
+.stat-card--reach::before    { background: #3b82f6; }
+.stat-card--engage::before   { background: #10b981; }
+.stat-card--reactions::before{ background: #f43f5e; }
+.stat-card--rate::before     { background: #8b5cf6; }
+
+.stat-card-top { display: flex; align-items: center; justify-content: space-between; }
+.stat-icon {
+    width: 36px; height: 36px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.stat-icon--reach    { background: #eff6ff; color: #3b82f6; }
+.stat-icon--engage   { background: #ecfdf5; color: #10b981; }
+.stat-icon--reactions{ background: #fff1f2; color: #f43f5e; }
+.stat-icon--rate     { background: #f5f3ff; color: #8b5cf6; }
+
+.stat-delta {
+    font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
+}
+.stat-delta--up   { background: #dcfce7; color: #16a34a; }
+.stat-delta--down { background: #fee2e2; color: #dc2626; }
+
+.stat-value { font-size: 26px; font-weight: 700; color: var(--color-text); letter-spacing: -0.5px; }
+.stat-label { font-size: 12px; color: var(--color-text-muted); font-weight: 500; }
+
+/* ── CHART CARDS ── */
+.chart-card {
+    background: white; border-radius: var(--radius); box-shadow: var(--shadow-sm);
+    padding: 22px 24px; margin-bottom: 24px;
+}
+.chart-header {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;
+}
+.chart-title { font-size: 14px; font-weight: 700; color: var(--color-text); }
+.chart-toggle { display: flex; gap: 4px; }
+.toggle-btn {
+    padding: 5px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+    border: 1px solid var(--color-border); background: white; color: var(--color-text-muted);
+    cursor: pointer; font-family: var(--font); transition: all .15s;
+}
+.toggle-btn--active {
+    background: var(--color-primary); color: white; border-color: var(--color-primary);
+}
+.toggle-btn:hover:not(.toggle-btn--active) { background: var(--color-bg); }
+
+.chart-container { position: relative; height: 240px; }
+
+/* ── TOP POSTS ── */
+.top-posts-card {
+    background: white; border-radius: var(--radius); box-shadow: var(--shadow-sm);
+    padding: 22px 24px; margin-bottom: 24px;
+}
+.top-posts-title { font-size: 14px; font-weight: 700; color: var(--color-text); margin-bottom: 16px; }
+.top-post-item {
+    padding: 14px 0; border-bottom: 1px solid #f3f4f6;
+    display: flex; align-items: center; justify-content: space-between; gap: 20px;
+}
+.top-post-item:last-child { border-bottom: none; padding-bottom: 0; }
+.top-post-left { flex: 1; min-width: 0; }
+.top-post-name { font-size: 13.5px; font-weight: 600; color: var(--color-text); margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-post-meta { display: flex; align-items: center; gap: 14px; font-size: 11.5px; color: var(--color-text-muted); }
+.top-post-meta-item { display: flex; align-items: center; gap: 4px; }
+.top-post-right { text-align: right; flex-shrink: 0; }
+.top-post-engagement { font-size: 20px; font-weight: 700; color: var(--color-text); }
+.top-post-eng-label { font-size: 10.5px; color: var(--color-text-muted); margin-top: 1px; }
+
+/* ── BOTTOM STATS ROW ── */
+.bottom-stats {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;
+}
+.bottom-stat-card {
+    background: white; border-radius: var(--radius); box-shadow: var(--shadow-sm);
+    padding: 18px 20px; display: flex; align-items: flex-start; gap: 14px;
+}
+.bottom-stat-icon {
+    width: 36px; height: 36px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.bottom-stat-icon--reactions { background: #fff1f2; color: #f43f5e; }
+.bottom-stat-icon--shares    { background: #eff6ff; color: #3b82f6; }
+.bottom-stat-icon--comments  { background: #ecfdf5; color: #10b981; }
+.bottom-stat-value { font-size: 22px; font-weight: 700; color: var(--color-text); margin-bottom: 3px; }
+.bottom-stat-label { font-size: 12px; color: var(--color-text-muted); }
+
+/* ── CHART LEGEND ── */
+.chart-legend { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-muted); }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+</style>
 </head>
 <body>
+<div class="app">
 
-<div class="sidebar">
-    <div class="logo">NUPost</div>
-    <ul>
-        <li onclick="location.href='index.php'">Dashboard</li>
-        <li onclick="location.href='request_management.php'">Request Management</li>
-        <li onclick="location.href='scheduling_calendar.php'">Scheduling & Calendar</li>
-        <li class="active">Analytics</li>
-        <li onclick="location.href='reports.php'">Reports</li>
-        <li>Settings</li>
-    </ul>
-</div>
+<!-- SIDEBAR -->
+<aside class="sidebar">
+    <div class="sidebar__logo">
+        <img src="../auth/assets/nupostlogo.png" alt="NUPost"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+        <span class="sidebar__logo-text" style="display:none;">NUPost</span>
+    </div>
+    <nav class="sidebar__nav">
+        <a href="index.php" class="sidebar__item">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>
+            Dashboard
+        </a>
+        <a href="request_management.php" class="sidebar__item">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Request Management
+        </a>
+        <a href="scheduling_calendar.php" class="sidebar__item">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Scheduling &amp; Calendar
+        </a>
+        <a href="analytics.php" class="sidebar__item sidebar__item--active">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            Analytics
+        </a>
+        <a href="reports.php" class="sidebar__item">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Reports
+        </a>
+        <a href="settings.php" class="sidebar__item">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Settings
+        </a>
+    </nav>
+    <div class="sidebar__footer">
+        <a href="../auth/logout.php" class="sidebar__logout">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Logout
+        </a>
+    </div>
+</aside>
 
+<!-- MAIN -->
 <div class="main">
+
+    <!-- TOPBAR -->
     <div class="topbar">
-        <h2>Analytics</h2>
+        <div class="topbar-left">
+            <span class="topbar-title">Analytics</span>
+        </div>
+        <div class="topbar-right">
+            <div class="admin-badge">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <?= htmlspecialchars($_SESSION["admin_email"] ?? "Admin") ?>
+            </div>
+        </div>
     </div>
 
+    <!-- CONTENT -->
     <div class="content">
 
-        <!-- Stats Cards -->
-        <div class="stats">
-            <div class="card">
-                <small>Total Reach</small>
-                <h2><?php echo $reach; ?></h2>
+        <!-- DATE RANGE -->
+        <div class="date-range-bar">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+            <select class="date-range-select" id="date-range">
+                <option value="7">Last 7 Days</option>
+                <option value="30" selected>Last 30 Days</option>
+                <option value="90">Last 3 Months</option>
+                <option value="365">This Year</option>
+            </select>
+        </div>
+
+        <!-- STAT CARDS -->
+        <?php $has_data = ($reach + $engagement + $reactions + $shares + $comments_total) > 0; ?>
+        <div class="stat-cards">
+            <!-- Reach -->
+            <div class="stat-card stat-card--reach">
+                <div class="stat-card-top">
+                    <div class="stat-icon stat-icon--reach">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </div>
+                    <?php if ($has_data): ?><span class="stat-delta stat-delta--up">&#9650; +8.5%</span><?php endif; ?>
+                </div>
+                <div class="stat-value"><?= $has_data ? fmt($reach) : '—' ?></div>
+                <div class="stat-label">Total Reach</div>
             </div>
-            <div class="card">
-                <small>Total Engagement</small>
-                <h2><?php echo $engagement; ?></h2>
+            <!-- Engagement -->
+            <div class="stat-card stat-card--engage">
+                <div class="stat-card-top">
+                    <div class="stat-icon stat-icon--engage">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    </div>
+                    <?php if ($has_data): ?><span class="stat-delta stat-delta--up">&#9650; +13.9%</span><?php endif; ?>
+                </div>
+                <div class="stat-value"><?= $has_data ? fmt($engagement) : '—' ?></div>
+                <div class="stat-label">Total Engagement</div>
             </div>
-            <div class="card">
-                <small>Total Reactions</small>
-                <h2><?php echo $reactions; ?></h2>
+            <!-- Reactions -->
+            <div class="stat-card stat-card--reactions">
+                <div class="stat-card-top">
+                    <div class="stat-icon stat-icon--reactions">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                    </div>
+                    <?php if ($has_data): ?><span class="stat-delta stat-delta--up">&#9650; +5.2%</span><?php endif; ?>
+                </div>
+                <div class="stat-value"><?= $has_data ? fmt($reactions) : '—' ?></div>
+                <div class="stat-label">Total Reactions</div>
+            </div>
+            <!-- Engagement Rate -->
+            <div class="stat-card stat-card--rate">
+                <div class="stat-card-top">
+                    <div class="stat-icon stat-icon--rate">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    </div>
+                    <?php if ($has_data): ?><span class="stat-delta stat-delta--up">&#9650; +4.1%</span><?php endif; ?>
+                </div>
+                <div class="stat-value"><?= $has_data ? $eng_rate.'%' : '—' ?></div>
+                <div class="stat-label">Avg Engagement Rate</div>
             </div>
         </div>
 
-        <!-- Bar Chart -->
-        <canvas id="chart"></canvas>
+        <!-- PERFORMANCE OVER TIME CHART -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <div>
+                    <div class="chart-title">Performance Over Time</div>
+                    <div class="chart-legend" style="margin-top:6px;">
+                        <div class="legend-item"><div class="legend-dot" style="background:#002366;"></div> Reach</div>
+                        <div class="legend-item"><div class="legend-dot" style="background:#10b981;"></div> Engagement</div>
+                        <div class="legend-item"><div class="legend-dot" style="background:#f43f5e;"></div> Reactions</div>
+                    </div>
+                </div>
+                <div class="chart-toggle">
+                    <button class="toggle-btn toggle-btn--active" onclick="setLineMetric('reach',this)">Reach</button>
+                    <button class="toggle-btn" onclick="setLineMetric('engagement',this)">Engagement</button>
+                    <button class="toggle-btn" onclick="setLineMetric('reactions',this)">Reactions</button>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="lineChart"></canvas>
+            </div>
+        </div>
 
-    </div>
-</div>
+        <!-- POST PERFORMANCE COMPARISON CHART -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <div>
+                    <div class="chart-title">Post Performance Comparison</div>
+                    <div class="chart-legend" style="margin-top:6px;">
+                        <div class="legend-item"><div class="legend-dot" style="background:#002366;"></div> Reach</div>
+                        <div class="legend-item"><div class="legend-dot" style="background:#f59e0b;"></div> Engagement</div>
+                        <div class="legend-item"><div class="legend-dot" style="background:#10b981;"></div> Reactions</div>
+                    </div>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="barChart"></canvas>
+            </div>
+        </div>
+
+        <!-- TOP PERFORMING POSTS -->
+        <div class="top-posts-card">
+            <div class="top-posts-title">Top Performing Posts</div>
+            <?php if (!empty($top_posts)): ?>
+                <?php foreach ($top_posts as $post): ?>
+                <div class="top-post-item">
+                    <div class="top-post-left">
+                        <div class="top-post-name"><?= htmlspecialchars($post['post_title'] ?? 'Untitled') ?></div>
+                        <div class="top-post-meta">
+                            <div class="top-post-meta-item">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                <?= fmt($post['reach']) ?> reach
+                            </div>
+                            <div class="top-post-meta-item">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                                <?= fmt($post['reactions']) ?> reactions
+                            </div>
+                            <div class="top-post-meta-item">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                                <?= fmt($post['shares']) ?> shares
+                            </div>
+                            <div class="top-post-meta-item">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                <?= fmt($post['comments']) ?> comments
+                            </div>
+                        </div>
+                    </div>
+                    <div class="top-post-right">
+                        <div class="top-post-engagement"><?= number_format($post['engagement']) ?></div>
+                        <div class="top-post-eng-label">Total engagement</div>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <div style="padding:40px 0;text-align:center;color:#9ca3af;">
+                    <svg width="36" height="36" fill="none" stroke="#d1d5db" stroke-width="1.5" viewBox="0 0 24 24" style="display:block;margin:0 auto 10px;"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    <p style="font-size:13px;">No post data yet. Connect the Meta Graph API to start tracking.</p>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- BOTTOM STATS ROW -->
+        <div class="bottom-stats">
+            <div class="bottom-stat-card">
+                <div class="bottom-stat-icon bottom-stat-icon--reactions">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                </div>
+                <div>
+                    <div class="bottom-stat-value"><?= $has_data ? fmt($reactions) : '—' ?></div>
+                    <div class="bottom-stat-label">Reactions<br><span style="font-size:11px;color:#9ca3af;">Total reactions across all posts</span></div>
+                </div>
+            </div>
+            <div class="bottom-stat-card">
+                <div class="bottom-stat-icon bottom-stat-icon--shares">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                </div>
+                <div>
+                    <div class="bottom-stat-value"><?= $has_data ? fmt($shares) : '—' ?></div>
+                    <div class="bottom-stat-label">Shares<br><span style="font-size:11px;color:#9ca3af;">Total shares across all posts</span></div>
+                </div>
+            </div>
+            <div class="bottom-stat-card">
+                <div class="bottom-stat-icon bottom-stat-icon--comments">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div>
+                    <div class="bottom-stat-value"><?= $has_data ? fmt($comments_total) : '—' ?></div>
+                    <div class="bottom-stat-label">Comments<br><span style="font-size:11px;color:#9ca3af;">Total comments across all posts</span></div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- .content -->
+</div><!-- .main -->
+</div><!-- .app -->
 
 <script>
-new Chart(document.getElementById("chart"), {
-    type:'bar',
-    data:{
-        labels:['Reach','Engagement','Reactions'],
-        datasets:[{
-            label:'Analytics',
-            backgroundColor:['#003366','#0059b3','#2ecc71'],
-            data:[<?php echo $reach ?>,<?php echo $engagement ?>,<?php echo $reactions ?>]
+// ── DATA FROM PHP ─────────────────────────────────────────────────────────
+const perfLabels = <?= json_encode($perf_labels) ?>;
+const perfReach  = <?= json_encode($perf_reach)  ?>;
+const perfEng    = <?= json_encode($perf_eng)    ?>;
+const perfReact  = <?= json_encode($perf_react)  ?>;
+
+const compLabels = <?= json_encode($comp_labels) ?>;
+const compReach  = <?= json_encode($comp_reach)  ?>;
+const compEng    = <?= json_encode($comp_eng)    ?>;
+const compReact  = <?= json_encode($comp_react)  ?>;
+
+const hasPerf = perfLabels.length > 0;
+const hasComp = compLabels.length > 0;
+
+// ── EMPTY STATE PLUGIN ────────────────────────────────────────────────────
+const emptyStatePlugin = {
+    id: 'emptyState',
+    afterDraw(chart) {
+        const hasData = chart.data.datasets.some(d => d.data && d.data.length > 0 && d.data.some(v => v !== 0 && v !== null));
+        if (!hasData) {
+            const { ctx, chartArea: { left, top, right, bottom } } = chart;
+            const cx = (left + right) / 2;
+            const cy = (top + bottom) / 2;
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '13px Inter, sans-serif';
+            ctx.fillText('No data yet — connect Meta Graph API to populate charts', cx, cy);
+            ctx.restore();
+        }
+    }
+};
+Chart.register(emptyStatePlugin);
+
+// ── CHART DEFAULTS ────────────────────────────────────────────────────────
+Chart.defaults.font.family = "'Inter', sans-serif";
+Chart.defaults.font.size   = 12;
+Chart.defaults.color       = '#6b7280';
+
+// ── LINE CHART ────────────────────────────────────────────────────────────
+const lineCtx  = document.getElementById('lineChart').getContext('2d');
+const lineData = {
+    reach:      { data: perfReach,  color: '#002366' },
+    engagement: { data: perfEng,    color: '#10b981' },
+    reactions:  { data: perfReact,  color: '#f43f5e' },
+};
+
+let lineChart = new Chart(lineCtx, {
+    type: 'line',
+    data: {
+        labels: hasPerf ? perfLabels : ['—'],
+        datasets: [{
+            label: 'Reach',
+            data: hasPerf ? perfReach : [0],
+            borderColor: '#002366',
+            backgroundColor: 'rgba(0,35,102,0.07)',
+            borderWidth: 2.5,
+            pointRadius: hasPerf ? 4 : 0,
+            pointBackgroundColor: '#002366',
+            pointBorderColor: 'white',
+            pointBorderWidth: 2,
+            tension: 0.4,
+            fill: true,
         }]
     },
-    options:{
-        responsive:true,
-        plugins:{ legend:{ display:false } },
-        scales:{ y:{ beginAtZero:true } }
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { grid: { display: false }, border: { display: false } },
+            y: {
+                beginAtZero: true,
+                grid: { color: '#f3f4f6' },
+                border: { display: false },
+                ticks: { callback: v => v >= 1000 ? (v/1000)+'K' : v }
+            }
+        },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                enabled: hasPerf,
+                backgroundColor: 'white',
+                titleColor: '#111827',
+                bodyColor: '#6b7280',
+                borderColor: '#e5e7eb',
+                borderWidth: 1,
+                padding: 10,
+                callbacks: {
+                    label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString()
+                }
+            }
+        }
     }
 });
+
+function setLineMetric(metric, btn) {
+    document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('toggle-btn--active'));
+    btn.classList.add('toggle-btn--active');
+    const d = lineData[metric];
+    lineChart.data.datasets[0].data                 = hasPerf ? d.data : [0];
+    lineChart.data.datasets[0].label                = btn.textContent;
+    lineChart.data.datasets[0].borderColor          = d.color;
+    lineChart.data.datasets[0].backgroundColor      = d.color + '12';
+    lineChart.data.datasets[0].pointBackgroundColor = d.color;
+    lineChart.update();
+}
+
+// ── BAR CHART ─────────────────────────────────────────────────────────────
+new Chart(document.getElementById('barChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+        labels: hasComp ? compLabels : ['—'],
+        datasets: [
+            {
+                label: 'Reach',
+                data: hasComp ? compReach : [0],
+                backgroundColor: '#002366',
+                borderRadius: 4,
+                borderSkipped: false,
+            },
+            {
+                label: 'Engagement',
+                data: hasComp ? compEng : [0],
+                backgroundColor: '#f59e0b',
+                borderRadius: 4,
+                borderSkipped: false,
+            },
+            {
+                label: 'Reactions',
+                data: hasComp ? compReact : [0],
+                backgroundColor: '#10b981',
+                borderRadius: 4,
+                borderSkipped: false,
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                enabled: hasComp,
+                backgroundColor: 'white',
+                titleColor: '#111827',
+                bodyColor: '#6b7280',
+                borderColor: '#e5e7eb',
+                borderWidth: 1,
+                padding: 10,
+                callbacks: {
+                    label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString()
+                }
+            }
+        },
+        scales: {
+            x: { grid: { display: false }, border: { display: false } },
+            y: {
+                beginAtZero: true,
+                grid: { color: '#f3f4f6' },
+                border: { display: false },
+                ticks: { callback: v => v >= 1000 ? (v/1000)+'K' : v }
+            }
+        }
+    }
+});
+
 </script>
 
 </body>

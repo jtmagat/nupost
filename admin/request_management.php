@@ -2,7 +2,6 @@
 session_start();
 include "../config/database.php";
 
-// Admin only
 if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
     header("Location: ../auth/login.php");
     exit();
@@ -13,31 +12,67 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["update_status"])) {
     $req_id     = (int)$_POST["req_id"];
     $new_status = mysqli_real_escape_string($conn, $_POST["new_status"]);
     $allowed_statuses = ["Pending Review", "Under Review", "Approved", "Posted", "Rejected"];
+
     if (in_array($new_status, $allowed_statuses)) {
+        $req_q   = mysqli_query($conn, "SELECT * FROM requests WHERE id=$req_id LIMIT 1");
+        $req_row = mysqli_fetch_assoc($req_q);
+        $old_status = $req_row["status"] ?? "";
         mysqli_query($conn, "UPDATE requests SET status='$new_status' WHERE id=$req_id");
+
+        if ($req_row && $old_status !== $new_status) {
+            $requester_esc = mysqli_real_escape_string($conn, $req_row["requester"]);
+            $user_q   = mysqli_query($conn, "SELECT id FROM users WHERE name='$requester_esc' LIMIT 1");
+            $user_row = mysqli_fetch_assoc($user_q);
+            if ($user_row) {
+                $uid = (int)$user_row["id"];
+                $now = date("Y-m-d H:i:s");
+                $notif_data = match($new_status) {
+                    "Under Review" => ["title"=>"Request Under Review",  "message"=>"Your request \"{$req_row['title']}\" is now being reviewed by our team.", "type"=>"review"],
+                    "Approved"     => ["title"=>"Request Approved! 🎉",  "message"=>"Great news! Your request \"{$req_row['title']}\" has been approved.",      "type"=>"approved"],
+                    "Posted"       => ["title"=>"Request Posted! 🚀",     "message"=>"Your request \"{$req_row['title']}\" has been published.",                "type"=>"posted"],
+                    "Rejected"     => ["title"=>"Request Rejected",       "message"=>"Unfortunately, your request \"{$req_row['title']}\" was not approved.",   "type"=>"rejected"],
+                    default        => ["title"=>"Status Updated",         "message"=>"Your request \"{$req_row['title']}\" status: $new_status.",               "type"=>"review"],
+                };
+                $nt = mysqli_real_escape_string($conn, $notif_data["title"]);
+                $nm = mysqli_real_escape_string($conn, $notif_data["message"]);
+                $ny = mysqli_real_escape_string($conn, $notif_data["type"]);
+                mysqli_query($conn, "INSERT INTO notifications (user_id,title,message,type,is_read,created_at) VALUES ('$uid','$nt','$nm','$ny',0,'$now')");
+            }
+        }
     }
-    // Redirect to avoid resubmit on refresh
-    $qs = http_build_query(array_diff_key($_GET, ['page'=>1]));
-    header("Location: request_management.php" . ($qs ? "?$qs" : ""));
+    $qs_params = [];
+    if (!empty($_GET['tab']))      $qs_params['tab']      = $_GET['tab'];
+    if (!empty($_GET['search']))   $qs_params['search']   = $_GET['search'];
+    if (!empty($_GET['priority'])) $qs_params['priority'] = $_GET['priority'];
+    if (!empty($_GET['page']))     $qs_params['page']     = $_GET['page'];
+    $qs = !empty($qs_params) ? '?' . http_build_query($qs_params) : '';
+    header("Location: request_management.php" . $qs);
     exit();
 }
 
+// ===== Tab (replaces status filter) =====
+$tab = $_GET['tab'] ?? 'active';
+$allowed_tabs = ['active', 'posted', 'rejected'];
+if (!in_array($tab, $allowed_tabs)) $tab = 'active';
+
 // ===== Pagination & Search =====
-$limit  = 10;
+$limit  = 5;
 $page   = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $offset = ($page - 1) * $limit;
 
-$search       = isset($_GET['search']) ? mysqli_real_escape_string($conn, $_GET['search']) : '';
-$statusFilter = isset($_GET['status']) ? mysqli_real_escape_string($conn, $_GET['status']) : '';
+$search         = isset($_GET['search'])   ? mysqli_real_escape_string($conn, $_GET['search'])   : '';
 $priorityFilter = isset($_GET['priority']) ? mysqli_real_escape_string($conn, $_GET['priority']) : '';
 
-$where = "1";
+// Build WHERE based on tab
+$tab_where = match($tab) {
+    'posted'   => "status = 'Posted'",
+    'rejected' => "status = 'Rejected'",
+    default    => "status NOT IN ('Posted','Rejected')",  // active = all unfinished
+};
+
+$where = $tab_where;
 if ($search !== '') {
     $where .= " AND (title LIKE '%$search%' OR requester LIKE '%$search%' OR category LIKE '%$search%')";
-}
-$valid_statuses = ["Pending Review","Under Review","Approved","Posted","Rejected"];
-if ($statusFilter !== '' && in_array($statusFilter, $valid_statuses)) {
-    $where .= " AND status='$statusFilter'";
 }
 $valid_priorities = ["Low","Medium","High","Urgent"];
 if ($priorityFilter !== '' && in_array($priorityFilter, $valid_priorities)) {
@@ -48,14 +83,18 @@ $totalQuery    = mysqli_query($conn, "SELECT COUNT(*) as total FROM requests WHE
 $totalRow      = mysqli_fetch_assoc($totalQuery);
 $totalRequests = $totalRow['total'];
 $totalPages    = max(1, ceil($totalRequests / $limit));
+if ($page > $totalPages) $page = $totalPages;
+$offset = ($page - 1) * $limit;
 
 $result = mysqli_query($conn, "SELECT * FROM requests WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
 
-// Counts for stat cards
+// Counts for stat cards + tabs
 $count_pending  = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM requests WHERE status='Pending Review'"))["c"];
 $count_review   = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM requests WHERE status='Under Review'"))["c"];
 $count_approved = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM requests WHERE status='Approved'"))["c"];
 $count_posted   = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM requests WHERE status='Posted'"))["c"];
+$count_rejected = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM requests WHERE status='Rejected'"))["c"];
+$count_active   = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM requests WHERE status NOT IN ('Posted','Rejected')"))["c"];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -63,16 +102,13 @@ $count_posted   = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c F
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Request Management – NUPost Admin</title>
-
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
 <style>
 :root {
     --color-primary: #002366;
     --color-primary-light: #003a8c;
-    --color-sidebar: #001a4d;
     --color-bg: #f5f6fa;
     --color-border: #e5e7eb;
     --color-text: #111827;
@@ -84,57 +120,46 @@ $count_posted   = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c F
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; font-family: var(--font); background: var(--color-bg); color: var(--color-text); font-size: 14px; }
-
-/* ===== LAYOUT ===== */
 .app { display: flex; min-height: 100vh; }
 
-/* ===== SIDEBAR ===== */
+/* SIDEBAR */
 .sidebar {
     width: var(--sidebar-width); background: var(--color-primary);
     display: flex; flex-direction: column; flex-shrink: 0;
     position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
 }
-.sidebar__logo {
-    padding: 20px 20px 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-}
+.sidebar__logo { padding: 20px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.1); }
 .sidebar__logo img { height: 32px; width: auto; }
 .sidebar__logo-text { font-size: 18px; font-weight: 700; color: white; }
+.sidebar__subtitle { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 3px; }
 .sidebar__nav { padding: 12px 10px; flex: 1; }
 .sidebar__item {
     display: flex; align-items: center; gap: 10px;
     padding: 10px 12px; border-radius: 8px; margin-bottom: 2px;
     color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500;
-    text-decoration: none; cursor: pointer; transition: background .15s, color .15s;
+    text-decoration: none; transition: background .15s, color .15s;
 }
 .sidebar__item:hover { background: rgba(255,255,255,0.1); color: white; }
 .sidebar__item--active { background: rgba(255,255,255,0.15); color: white; }
-.sidebar__footer {
-    padding: 14px 10px;
-    border-top: 1px solid rgba(255,255,255,0.1);
-}
+.sidebar__footer { padding: 14px 10px 20px; border-top: 1px solid rgba(255,255,255,0.1); }
+.sidebar__footer-info { padding: 0 12px 12px; font-size: 11px; color: rgba(255,255,255,0.4); }
 .sidebar__logout {
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 12px; border-radius: 8px;
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
     color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 500;
     text-decoration: none; transition: background .15s, color .15s;
 }
 .sidebar__logout:hover { background: rgba(255,255,255,0.1); color: white; }
 
-/* ===== MAIN ===== */
-.main { margin-left: var(--sidebar-width); flex: 1; padding: 28px 28px; }
-
-/* ===== TOP BAR ===== */
+/* MAIN */
+.main { margin-left: var(--sidebar-width); flex: 1; padding: 28px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 .topbar h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
-.topbar-right { display: flex; align-items: center; gap: 10px; }
 .admin-badge {
-    display: flex; align-items: center; gap: 7px;
-    padding: 6px 12px; background: white; border-radius: 8px;
-    border: 1px solid var(--color-border); font-size: 12.5px; font-weight: 500;
+    display: flex; align-items: center; gap: 7px; padding: 6px 12px;
+    background: white; border-radius: 8px; border: 1px solid var(--color-border); font-size: 12.5px; font-weight: 500;
 }
 
-/* ===== STAT CARDS ===== */
+/* STAT CARDS */
 .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 24px; }
 .stat-card {
     background: white; border-radius: var(--radius); padding: 18px;
@@ -153,34 +178,51 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 .stat-card__icon--green  { background: #ecfdf5; color: #10b981; }
 .stat-card__icon--purple { background: #f5f3ff; color: #8b5cf6; }
 
-/* ===== SEARCH / FILTER BAR ===== */
-.filter-bar {
-    display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+/* TABS */
+.tab-row {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 14px; flex-wrap: wrap;
 }
+.tab-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 16px; border-radius: 8px; border: 1px solid var(--color-border);
+    background: white; font-size: 13px; font-weight: 500; color: var(--color-text-muted);
+    text-decoration: none; transition: all .15s; white-space: nowrap;
+}
+.tab-btn:hover { background: var(--color-bg); color: var(--color-text); }
+.tab-btn--active { background: var(--color-primary); color: white; border-color: var(--color-primary); }
+.tab-count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 20px; height: 18px; padding: 0 5px;
+    border-radius: 10px; font-size: 10px; font-weight: 700;
+    background: rgba(255,255,255,0.25); color: white;
+}
+.tab-btn:not(.tab-btn--active) .tab-count {
+    background: var(--color-bg); color: var(--color-text-muted);
+}
+
+/* FILTER BAR */
+.filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .filter-bar input[type="text"],
 .filter-bar select {
     height: 36px; border: 1px solid var(--color-border); border-radius: 7px;
-    padding: 0 12px; font-size: 13px; font-family: var(--font);
-    background: white; color: var(--color-text); outline: none;
+    padding: 0 12px; font-size: 13px; font-family: var(--font); background: white; color: var(--color-text); outline: none;
 }
-.filter-bar input[type="text"] { flex: 1; min-width: 180px; }
-.filter-bar input:focus,
-.filter-bar select:focus { border-color: var(--color-primary); }
+.filter-bar input[type="text"] { flex: 1; min-width: 200px; }
+.filter-bar input:focus, .filter-bar select:focus { border-color: var(--color-primary); }
 .filter-btn {
     height: 36px; padding: 0 16px; background: var(--color-primary); color: white;
-    border: none; border-radius: 7px; font-size: 13px; font-weight: 500;
-    cursor: pointer; font-family: var(--font);
+    border: none; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font);
 }
 .filter-btn:hover { background: var(--color-primary-light); }
 .reset-btn {
     height: 36px; padding: 0 14px; background: white; color: var(--color-text-muted);
     border: 1px solid var(--color-border); border-radius: 7px; font-size: 13px;
-    cursor: pointer; font-family: var(--font); text-decoration: none;
-    display: flex; align-items: center;
+    cursor: pointer; font-family: var(--font); text-decoration: none; display: flex; align-items: center;
 }
 .reset-btn:hover { background: var(--color-bg); }
 
-/* ===== TABLE CARD ===== */
+/* TABLE */
 .table-card { background: white; border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; }
 .table-card-header {
     padding: 14px 20px; border-bottom: 1px solid var(--color-border);
@@ -191,20 +233,13 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 
 table { width: 100%; border-collapse: collapse; }
 thead tr { border-bottom: 1px solid var(--color-border); }
-th {
-    padding: 10px 14px; text-align: left; font-size: 10.5px; font-weight: 600;
-    color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;
-}
+th { padding: 10px 14px; text-align: left; font-size: 10.5px; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
 tbody tr { border-bottom: 1px solid #f3f4f6; transition: background .1s; }
 tbody tr:last-child { border-bottom: none; }
-tbody tr:hover { background: #fafafa; }
 td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
 
-/* REQUEST CELL */
 .req-title { font-weight: 600; color: var(--color-text); margin-bottom: 2px; }
 .req-desc  { font-size: 11px; color: var(--color-text-muted); max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* THUMBNAIL */
 .req-thumb { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; }
 .req-thumb-placeholder {
     width: 36px; height: 36px; border-radius: 6px;
@@ -212,52 +247,59 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
     display: flex; align-items: center; justify-content: center; font-size: 14px;
 }
 
-/* BADGES */
-.badge {
-    display: inline-flex; align-items: center; padding: 3px 9px;
-    border-radius: 20px; font-size: 10.5px; font-weight: 600; white-space: nowrap;
-}
-.badge--high     { background: #fee2e2; color: #dc2626; }
-.badge--urgent   { background: #fef3c7; color: #b45309; }
-.badge--medium   { background: #fef3c7; color: #d97706; }
-.badge--low      { background: #f3f4f6; color: #6b7280; }
+.badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 20px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+.badge--high          { background: #fee2e2; color: #dc2626; }
+.badge--urgent        { background: #fef3c7; color: #b45309; }
+.badge--medium        { background: #fef3c7; color: #d97706; }
+.badge--low           { background: #f3f4f6; color: #6b7280; }
 .badge--approved      { background: #dcfce7; color: #16a34a; }
 .badge--posted        { background: #dbeafe; color: #2563eb; }
 .badge--under-review  { background: #fef3c7; color: #d97706; border: 1px solid #fde68a; }
 .badge--pending       { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
 .badge--rejected      { background: #fee2e2; color: #dc2626; }
 
-/* STATUS DROPDOWN IN TABLE */
 .status-select {
     padding: 4px 8px; border-radius: 6px; border: 1px solid var(--color-border);
-    font-size: 11.5px; font-family: var(--font); background: white;
-    color: var(--color-text); cursor: pointer; outline: none;
+    font-size: 11.5px; font-family: var(--font); background: white; color: var(--color-text); cursor: pointer; outline: none;
 }
 .status-select:focus { border-color: var(--color-primary); }
 .update-btn {
-    padding: 4px 10px; background: var(--color-primary); color: white;
+    padding: 5px 12px; background: var(--color-primary); color: white;
     border: none; border-radius: 5px; font-size: 11px; font-weight: 600;
     cursor: pointer; font-family: var(--font); margin-left: 4px;
 }
 .update-btn:hover { background: var(--color-primary-light); }
 
-/* DATE */
 .date-text { font-size: 11.5px; color: var(--color-text-muted); white-space: nowrap; }
-
-/* EMPTY STATE */
 .empty-state { padding: 48px; text-align: center; color: #9ca3af; font-size: 13px; }
+.clickable-row { cursor: pointer; }
+.clickable-row:hover { background: #f0f4ff !important; }
 
-/* ===== PAGINATION ===== */
-.pagination { display: flex; align-items: center; gap: 4px; padding: 14px 20px; border-top: 1px solid var(--color-border); flex-wrap: wrap; }
+/* PAGINATION */
+.pagination { display: flex; align-items: center; gap: 4px; padding: 16px 20px; border-top: 1px solid var(--color-border); flex-wrap: wrap; }
 .page-btn {
-    min-width: 32px; height: 32px; padding: 0 10px; border-radius: 7px;
+    min-width: 34px; height: 34px; padding: 0 10px; border-radius: 8px;
     border: 1px solid var(--color-border); background: white; color: var(--color-text-muted);
-    font-size: 12.5px; text-decoration: none; display: flex; align-items: center; justify-content: center;
-    transition: background .15s;
+    font-size: 12.5px; text-decoration: none; display: flex; align-items: center; justify-content: center; transition: background .15s;
 }
 .page-btn:hover { background: var(--color-bg); }
-.page-btn--active { background: var(--color-primary); color: white; border-color: var(--color-primary); }
+.page-btn--active { background: var(--color-primary); color: white; border-color: var(--color-primary); font-weight: 600; }
+.page-btn--disabled { opacity: 0.4; pointer-events: none; }
 .page-info { font-size: 12px; color: var(--color-text-muted); margin-left: auto; }
+.page-ellipsis { padding: 0 6px; color: var(--color-text-muted); font-size: 13px; display: flex; align-items: center; }
+
+/* TOAST */
+.toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 999;
+    background: #002366; color: white; padding: 12px 20px; border-radius: 10px;
+    font-size: 13px; font-weight: 500; box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    display: flex; align-items: center; gap: 10px;
+    animation: slideIn .3s ease, fadeOut .4s ease 2.6s forwards;
+}
+.toast--success { background: #059669; }
+.toast--reject  { background: #dc2626; }
+@keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; pointer-events: none; } }
 </style>
 </head>
 <body>
@@ -269,6 +311,7 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
         <img src="../auth/assets/nupostlogo.png" alt="NUPost"
              onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
         <span class="sidebar__logo-text" style="display:none;">NUPost</span>
+        <div class="sidebar__subtitle">Admin Dashboard</div>
     </div>
     <nav class="sidebar__nav">
         <a href="index.php" class="sidebar__item">
@@ -297,6 +340,7 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
         </a>
     </nav>
     <div class="sidebar__footer">
+        <div class="sidebar__footer-info">NU Lipa Marketing Office</div>
         <a href="../auth/logout.php" class="sidebar__logout">
             <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Logout
@@ -304,17 +348,12 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
     </div>
 </aside>
 
-<!-- MAIN CONTENT -->
 <div class="main">
-
-    <!-- TOP BAR -->
     <div class="topbar">
         <h1>Request Management</h1>
-        <div class="topbar-right">
-            <div class="admin-badge">
-                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                <?= htmlspecialchars($_SESSION["admin_email"] ?? "Admin") ?>
-            </div>
+        <div class="admin-badge">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <?= htmlspecialchars($_SESSION["admin_email"] ?? "Admin") ?>
         </div>
     </div>
 
@@ -346,16 +385,30 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
         </div>
     </div>
 
+    <!-- TABS -->
+    <div class="tab-row">
+        <a href="?tab=active"   class="tab-btn <?= $tab==='active'   ? 'tab-btn--active':'' ?>">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Active Requests
+            <span class="tab-count"><?= $count_active ?></span>
+        </a>
+        <a href="?tab=posted"   class="tab-btn <?= $tab==='posted'   ? 'tab-btn--active':'' ?>">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Posted
+            <span class="tab-count"><?= $count_posted ?></span>
+        </a>
+        <a href="?tab=rejected" class="tab-btn <?= $tab==='rejected' ? 'tab-btn--active':'' ?>">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            Rejected
+            <span class="tab-count"><?= $count_rejected ?></span>
+        </a>
+    </div>
+
     <!-- FILTER BAR -->
     <form method="get" class="filter-bar">
+        <input type="hidden" name="tab" value="<?= $tab ?>">
         <input type="text" name="search" placeholder="Search title, requester, category..."
                value="<?= htmlspecialchars($search) ?>">
-        <select name="status">
-            <option value="">All Statuses</option>
-            <?php foreach (["Pending Review","Under Review","Approved","Posted","Rejected"] as $s): ?>
-                <option value="<?= $s ?>" <?= $statusFilter === $s ? 'selected' : '' ?>><?= $s ?></option>
-            <?php endforeach; ?>
-        </select>
         <select name="priority">
             <option value="">All Priorities</option>
             <?php foreach (["Low","Medium","High","Urgent"] as $p): ?>
@@ -363,13 +416,18 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
             <?php endforeach; ?>
         </select>
         <button type="submit" class="filter-btn">Apply</button>
-        <a href="request_management.php" class="reset-btn">Reset</a>
+        <a href="?tab=<?= $tab ?>" class="reset-btn">Reset</a>
     </form>
 
-    <!-- TABLE CARD -->
+    <!-- TABLE -->
     <div class="table-card">
         <div class="table-card-header">
-            <span>Showing <strong><?= mysqli_num_rows($result) ?></strong> of <strong><?= $totalRequests ?></strong> requests</span>
+            <span>
+                Showing <strong><?= min($limit, $totalRequests - $offset) ?></strong> of
+                <strong><?= $totalRequests ?></strong>
+                <?= $tab === 'posted' ? 'posted' : ($tab === 'rejected' ? 'rejected' : 'active') ?> requests
+            </span>
+            <span style="font-size:12px;color:var(--color-text-muted);">5 per page</span>
         </div>
 
         <table>
@@ -382,7 +440,7 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
                     <th>PRIORITY</th>
                     <th>STATUS</th>
                     <th>DATE</th>
-                    <th>ACTION</th>
+                    <?php if ($tab === 'active'): ?><th>ACTION</th><?php endif; ?>
                 </tr>
             </thead>
             <tbody>
@@ -390,23 +448,22 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
                 <?php while ($row = mysqli_fetch_assoc($result)):
                     $priority_raw = strtolower($row["priority"]);
                     $priority_class = match($priority_raw) {
-                        "urgent" => "badge--urgent", "high" => "badge--high",
-                        "medium" => "badge--medium", default => "badge--low",
+                        "urgent"=>"badge--urgent","high"=>"badge--high","medium"=>"badge--medium",default=>"badge--low"
                     };
                     $status_raw = strtolower($row["status"]);
                     $status_class = match(true) {
-                        str_contains($status_raw, "approved")     => "badge--approved",
-                        str_contains($status_raw, "posted")       => "badge--posted",
-                        str_contains($status_raw, "under review") => "badge--under-review",
-                        str_contains($status_raw, "rejected")     => "badge--rejected",
-                        default                                   => "badge--pending",
+                        str_contains($status_raw,"approved")    =>"badge--approved",
+                        str_contains($status_raw,"posted")      =>"badge--posted",
+                        str_contains($status_raw,"under review")=>"badge--under-review",
+                        str_contains($status_raw,"rejected")    =>"badge--rejected",
+                        default                                 =>"badge--pending",
                     };
-                    $date = date("M j, Y", strtotime($row["created_at"]));
+                    $date        = date("M j, Y", strtotime($row["created_at"]));
                     $media_files = explode(",", $row["media_file"] ?? "");
                     $first_media = trim($media_files[0]);
                 ?>
-                <tr>
-                    <td style="color:var(--color-text-muted);font-size:11.5px;">#<?= $row["request_id"] ?></td>
+                <tr class="clickable-row" onclick="window.location='request_info.php?id=<?= $row["id"] ?>'">
+                    <td style="color:var(--color-text-muted);font-size:11.5px;">#<?= htmlspecialchars($row["request_id"]) ?></td>
                     <td>
                         <div style="display:flex;align-items:center;gap:10px;">
                             <?php if ($first_media): ?>
@@ -427,23 +484,31 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
                     <td><span class="badge <?= $priority_class ?>"><?= htmlspecialchars($row["priority"]) ?></span></td>
                     <td><span class="badge <?= $status_class ?>"><?= htmlspecialchars($row["status"]) ?></span></td>
                     <td class="date-text"><?= $date ?></td>
-                    <td>
-                        <!-- Quick status update form -->
+                    <?php if ($tab === 'active'): ?>
+                    <td onclick="event.stopPropagation()">
                         <form method="POST" style="display:flex;align-items:center;gap:4px;">
                             <input type="hidden" name="req_id" value="<?= $row["id"] ?>">
                             <input type="hidden" name="update_status" value="1">
                             <select class="status-select" name="new_status">
                                 <?php foreach (["Pending Review","Under Review","Approved","Posted","Rejected"] as $s): ?>
-                                    <option value="<?= $s ?>" <?= $row["status"] === $s ? 'selected' : '' ?>><?= $s ?></option>
+                                    <option value="<?= $s ?>" <?= $row["status"]===$s?'selected':'' ?>><?= $s ?></option>
                                 <?php endforeach; ?>
                             </select>
                             <button type="submit" class="update-btn">Save</button>
                         </form>
                     </td>
+                    <?php endif; ?>
                 </tr>
                 <?php endwhile; ?>
             <?php else: ?>
-                <tr><td colspan="8"><div class="empty-state">No requests found.</div></td></tr>
+                <tr><td colspan="<?= $tab==='active'?8:7 ?>">
+                    <div class="empty-state">
+                        <?php if ($tab==='posted'): ?>No posted requests yet.
+                        <?php elseif ($tab==='rejected'): ?>No rejected requests.
+                        <?php else: ?>No active requests found.
+                        <?php endif; ?>
+                    </div>
+                </td></tr>
             <?php endif; ?>
             </tbody>
         </table>
@@ -452,22 +517,70 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
         <?php if ($totalPages > 1): ?>
         <div class="pagination">
             <?php
-            $qs_base = http_build_query(array_filter(['search'=>$search,'status'=>$statusFilter,'priority'=>$priorityFilter]));
+            $qs_base = http_build_query(array_filter(['tab'=>$tab,'search'=>$search,'priority'=>$priorityFilter]));
+
+            // Prev
             if ($page > 1): ?>
-                <a href="?page=<?= $page-1 ?>&<?= $qs_base ?>" class="page-btn">‹</a>
+                <a href="?page=<?= $page-1 ?>&<?= $qs_base ?>" class="page-btn">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+                </a>
+            <?php else: ?>
+                <span class="page-btn page-btn--disabled">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+                </span>
             <?php endif;
-            for ($i = max(1,$page-2); $i <= min($totalPages,$page+2); $i++): ?>
-                <a href="?page=<?= $i ?>&<?= $qs_base ?>" class="page-btn <?= $i===$page ? 'page-btn--active' : '' ?>"><?= $i ?></a>
-            <?php endfor;
+
+            // Page numbers with ellipsis
+            $range = 2;
+            $show_first = $page > $range + 2;
+            $show_last  = $page < $totalPages - $range - 1;
+
+            if ($show_first) {
+                echo "<a href='?page=1&$qs_base' class='page-btn'>1</a>";
+                if ($page > $range + 3) echo "<span class='page-ellipsis'>…</span>";
+            }
+
+            for ($i = max(1, $page - $range); $i <= min($totalPages, $page + $range); $i++) {
+                $active = $i === $page ? 'page-btn--active' : '';
+                echo "<a href='?page=$i&$qs_base' class='page-btn $active'>$i</a>";
+            }
+
+            if ($show_last) {
+                if ($page < $totalPages - $range - 2) echo "<span class='page-ellipsis'>…</span>";
+                echo "<a href='?page=$totalPages&$qs_base' class='page-btn'>$totalPages</a>";
+            }
+
+            // Next
             if ($page < $totalPages): ?>
-                <a href="?page=<?= $page+1 ?>&<?= $qs_base ?>" class="page-btn">›</a>
+                <a href="?page=<?= $page+1 ?>&<?= $qs_base ?>" class="page-btn">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+                </a>
+            <?php else: ?>
+                <span class="page-btn page-btn--disabled">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+                </span>
             <?php endif; ?>
             <span class="page-info">Page <?= $page ?> of <?= $totalPages ?></span>
         </div>
         <?php endif; ?>
     </div>
+</div>
+</div>
 
-</div><!-- .main -->
-</div><!-- .app -->
+<?php
+$updated_status = $_GET['updated'] ?? '';
+if ($updated_status):
+    $toast_class = match($updated_status) {
+        'Posted','Approved' => 'toast--success',
+        'Rejected'          => 'toast--reject',
+        default             => '',
+    };
+?>
+<div class="toast <?= $toast_class ?>" id="toast">
+    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+    Status updated to <strong><?= htmlspecialchars($updated_status) ?></strong>
+</div>
+<script>setTimeout(() => { document.getElementById('toast')?.remove(); }, 3000);</script>
+<?php endif; ?>
 </body>
 </html>

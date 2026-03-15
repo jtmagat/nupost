@@ -26,11 +26,9 @@ $total = count($notifications);
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NUPost – Notifications</title>
-
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
 <style>
 :root {
     --color-primary: #002366;
@@ -109,16 +107,14 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 .notif-item {
     display: flex; align-items: flex-start; gap: 14px;
     padding: 16px 20px; border-bottom: 1px solid #f3f4f6;
-    transition: background .1s; position: relative; text-decoration: none; color: inherit;
+    transition: background .1s; position: relative;
+    cursor: pointer;
 }
 .notif-item:last-child { border-bottom: none; }
 .notif-item:hover { background: #fafafa; }
-
-/* Unread = light blue bg */
 .notif-item--unread { background: #f0f5ff; }
 .notif-item--unread:hover { background: #e8f0fe; }
 
-/* Unread blue dot */
 .notif-dot {
     position: absolute; top: 18px; right: 16px;
     width: 8px; height: 8px; border-radius: 50%; background: #3b82f6; flex-shrink: 0;
@@ -133,6 +129,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 .notif-icon--posted    { background: #ede9fe; color: #7c3aed; }
 .notif-icon--reviewed  { background: #dbeafe; color: #2563eb; }
 .notif-icon--rejected  { background: #fee2e2; color: #dc2626; }
+.notif-icon--comment   { background: #fef3c7; color: #d97706; }
 .notif-icon--default   { background: #f3f4f6; color: #6b7280; }
 
 /* TEXT */
@@ -148,6 +145,79 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 }
 .empty-state svg { color: #d1d5db; }
 .empty-state p { font-size: 13px; color: #9ca3af; }
+
+/* ===== NOTIFICATION DETAIL MODAL ===== */
+.modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.45); z-index: 200;
+    align-items: center; justify-content: center;
+    padding: 20px;
+}
+.modal-overlay--open { display: flex; }
+.modal {
+    background: white; border-radius: 14px; max-width: 520px; width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2); overflow: hidden;
+    animation: modalIn .18s ease;
+}
+@keyframes modalIn { from { opacity:0; transform:scale(.96) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
+
+.modal-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 20px 22px; border-bottom: 1px solid var(--color-border);
+}
+.modal-icon {
+    width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+}
+.modal-header-text { flex: 1; }
+.modal-title { font-size: 15px; font-weight: 700; color: var(--color-text); margin-bottom: 2px; }
+.modal-time { font-size: 11.5px; color: #9ca3af; }
+.modal-close {
+    width: 32px; height: 32px; border-radius: 8px; border: none; background: var(--color-bg);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    color: var(--color-text-muted); font-size: 16px; transition: background .15s;
+    flex-shrink: 0;
+}
+.modal-close:hover { background: #e5e7eb; }
+
+.modal-body { padding: 22px; }
+.modal-message {
+    font-size: 14px; color: var(--color-text); line-height: 1.75;
+    margin-bottom: 16px;
+}
+
+/* Admin comment highlight box */
+.modal-comment-box {
+    background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 16px;
+}
+.modal-comment-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 700; color: #92400e;
+    text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px;
+}
+.modal-comment-text {
+    font-size: 13.5px; color: #78350f; line-height: 1.65;
+}
+
+.modal-footer {
+    padding: 16px 22px; border-top: 1px solid var(--color-border);
+    display: flex; gap: 8px; justify-content: flex-end;
+}
+.btn-modal-primary {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 18px; background: var(--color-primary); color: white;
+    border: none; border-radius: 8px; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: var(--font); text-decoration: none; transition: background .15s;
+}
+.btn-modal-primary:hover { background: var(--color-primary-light); }
+.btn-modal-secondary {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 16px; background: white; color: var(--color-text-muted);
+    border: 1px solid var(--color-border); border-radius: 8px; font-size: 13px;
+    cursor: pointer; font-family: var(--font); transition: background .15s;
+}
+.btn-modal-secondary:hover { background: var(--color-bg); }
 </style>
 </head>
 <body>
@@ -184,7 +254,6 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
         <input type="text" placeholder="Search requests...">
     </div>
     <div class="topnav__actions">
-        <!-- Bell icon — active since we're on notifications -->
         <a href="notifications.php" class="topnav__icon-btn topnav__icon-btn--active">
             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         </a>
@@ -210,29 +279,57 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
                 $is_unread = !$notif["is_read"];
                 $time      = date("n/j/Y, g:i A", strtotime($notif["created_at"]));
 
-                // Icon + color based on type
                 $icon_class = match(true) {
                     str_contains($type, "approv")  => "notif-icon--approved",
                     str_contains($type, "post")    => "notif-icon--posted",
                     str_contains($type, "review")  => "notif-icon--reviewed",
                     str_contains($type, "reject")  => "notif-icon--rejected",
+                    str_contains($type, "comment") => "notif-icon--comment",
                     default                        => "notif-icon--default",
                 };
 
-                // SVG icon per type
                 $icon_svg = match(true) {
-                    str_contains($type, "approv") => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-                    str_contains($type, "post")   => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
-                    str_contains($type, "review") => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
-                    str_contains($type, "reject") => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
-                    default                       => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+                    str_contains($type, "approv")  => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+                    str_contains($type, "post")    => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+                    str_contains($type, "review")  => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+                    str_contains($type, "reject")  => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+                    str_contains($type, "comment") => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+                    default                        => '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
                 };
+
+                // Extract admin note from message if present
+                $raw_message  = $notif["message"];
+                $admin_note   = "";
+                $clean_message = $raw_message;
+                if (strpos($raw_message, " Admin note: ") !== false) {
+                    $parts         = explode(" Admin note: ", $raw_message, 2);
+                    $clean_message = $parts[0];
+                    $admin_note    = $parts[1] ?? "";
+                }
+
+                // Data for modal (JSON encoded)
+                $modal_data = json_encode([
+                    "title"      => $notif["title"],
+                    "message"    => $clean_message,
+                    "adminNote"  => $admin_note,
+                    "time"       => date("F j, Y g:i A", strtotime($notif["created_at"])),
+                    "type"       => $type,
+                    "iconClass"  => $icon_class,
+                    "iconSvg"    => $icon_svg,
+                ]);
             ?>
-            <div class="notif-item <?= $is_unread ? 'notif-item--unread' : '' ?>">
+            <div class="notif-item <?= $is_unread ? 'notif-item--unread' : '' ?>"
+                 onclick="openNotif(<?= htmlspecialchars($modal_data, ENT_QUOTES) ?>)">
                 <div class="notif-icon <?= $icon_class ?>"><?= $icon_svg ?></div>
                 <div class="notif-body">
                     <div class="notif-title"><?= htmlspecialchars($notif["title"]) ?></div>
-                    <div class="notif-message"><?= htmlspecialchars($notif["message"]) ?></div>
+                    <div class="notif-message"><?= htmlspecialchars($clean_message) ?></div>
+                    <?php if ($admin_note): ?>
+                        <div style="display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-size:11px;color:#92400e;background:#fef3c7;padding:2px 8px;border-radius:20px;font-weight:600;">
+                            <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                            Admin comment attached — click to view
+                        </div>
+                    <?php endif; ?>
                     <div class="notif-time"><?= $time ?></div>
                 </div>
                 <?php if ($is_unread): ?>
@@ -253,6 +350,74 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 
 </main>
 </div>
+
+<!-- NOTIFICATION DETAIL MODAL -->
+<div class="modal-overlay" id="notif-modal" onclick="closeNotif(event)">
+    <div class="modal" id="modal-box">
+        <div class="modal-header">
+            <div class="modal-icon" id="modal-icon"></div>
+            <div class="modal-header-text">
+                <div class="modal-title" id="modal-title"></div>
+                <div class="modal-time" id="modal-time"></div>
+            </div>
+            <button class="modal-close" onclick="closeModalDirect()">&#10005;</button>
+        </div>
+        <div class="modal-body">
+            <div class="modal-message" id="modal-message"></div>
+            <div class="modal-comment-box" id="modal-comment-box" style="display:none;">
+                <div class="modal-comment-label">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    Comment from Admin
+                </div>
+                <div class="modal-comment-text" id="modal-comment-text"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <a href="requests.php" class="btn-modal-primary">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                View My Requests
+            </a>
+            <button class="btn-modal-secondary" onclick="closeModalDirect()">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function openNotif(data) {
+    document.getElementById('modal-title').textContent   = data.title;
+    document.getElementById('modal-time').textContent    = data.time;
+    document.getElementById('modal-message').textContent = data.message;
+    document.getElementById('modal-icon').className      = 'modal-icon ' + data.iconClass;
+    document.getElementById('modal-icon').innerHTML      = data.iconSvg;
+
+    const commentBox  = document.getElementById('modal-comment-box');
+    const commentText = document.getElementById('modal-comment-text');
+    if (data.adminNote && data.adminNote.trim() !== '') {
+        commentText.textContent = data.adminNote;
+        commentBox.style.display = 'block';
+    } else {
+        commentBox.style.display = 'none';
+    }
+
+    document.getElementById('notif-modal').classList.add('modal-overlay--open');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeNotif(e) {
+    if (e.target === document.getElementById('notif-modal')) {
+        closeModalDirect();
+    }
+}
+
+function closeModalDirect() {
+    document.getElementById('notif-modal').classList.remove('modal-overlay--open');
+    document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModalDirect();
+});
+</script>
 
 </body>
 </html>

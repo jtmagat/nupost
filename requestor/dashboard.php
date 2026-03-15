@@ -100,6 +100,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 }
 .topnav__create:hover { opacity: 0.9; }
 .topnav__search { flex: 1; max-width: 320px; position: relative; margin: 0 8px; }
+.topnav__search form { display: flex; }
 .topnav__search input {
     width: 100%; height: 36px; border: 1px solid var(--color-border); border-radius: 8px;
     padding: 0 12px 0 36px; font-size: 13px; font-family: var(--font);
@@ -229,10 +230,12 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
     </div>
 
     <div class="topnav__search">
-        <span class="topnav__search-icon">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </span>
-        <input type="text" placeholder="Search requests...">
+        <form method="GET" action="requests.php" id="search-form">
+            <span class="topnav__search-icon">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </span>
+            <input type="text" name="search" id="search-input" placeholder="Search requests..." autocomplete="off">
+        </form>
     </div>
 
     <div class="topnav__actions">
@@ -362,6 +365,18 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 
 </main>
 </div>
+
+<script>
+// Auto-submit search after 500ms pause
+const searchInput = document.getElementById('search-input');
+let searchTimer;
+searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+        document.getElementById('search-form').submit();
+    }, 500);
+});
+</script>
 
 </body>
 </html>
