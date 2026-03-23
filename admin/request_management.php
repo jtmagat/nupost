@@ -311,10 +311,9 @@ td { padding: 12px 14px; font-size: 12.5px; vertical-align: middle; }
         <img src="../auth/assets/nupostlogo.png" alt="NUPost"
              onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
         <span class="sidebar__logo-text" style="display:none;">NUPost</span>
-<<<<<<< HEAD
-=======
-        <div class="sidebar__subtitle">Admin Dashboard</div>
->>>>>>> ecb05c3ae2b33b76297c4ed43c2a80995d659373
+
+        
+
     </div>
     <nav class="sidebar__nav">
         <a href="index.php" class="sidebar__item">
