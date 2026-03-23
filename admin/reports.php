@@ -120,7 +120,10 @@ html, body { height: 100%; font-family: var(--font); background: var(--color-bg)
 .sidebar__item:hover { background: rgba(255,255,255,0.1); color: white; }
 .sidebar__item--active { background: rgba(255,255,255,0.15); color: white; }
 .sidebar__footer { padding: 14px 10px; border-top: 1px solid rgba(255,255,255,0.1); }
+<<<<<<< HEAD
 .sidebar__footer-info { padding: 0 12px 12px; font-size: 11px; color: rgba(255,255,255,0.4); }
+=======
+>>>>>>> ecb05c3ae2b33b76297c4ed43c2a80995d659373
 .sidebar__logout {
     display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
     color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 500;
@@ -319,7 +322,10 @@ tbody tr:hover td { background: #fafbff; }
         </a>
     </nav>
     <div class="sidebar__footer">
+<<<<<<< HEAD
         <div class="sidebar__footer-info">NU Lipa Marketing Office</div>
+=======
+>>>>>>> ecb05c3ae2b33b76297c4ed43c2a80995d659373
         <a href="../auth/logout.php" class="sidebar__logout">
             <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Logout
