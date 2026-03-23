@@ -10,8 +10,8 @@ if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
 // ══════════════════════════════════════════════════════════════════════════
 //  META GRAPH API CONFIG  —  fill these two values in
 // ══════════════════════════════════════════════════════════════════════════
-define('META_PAGE_ID',      '103616607927902');
-define('META_ACCESS_TOKEN', 'EAAT7USCesj8BRCbuZASL0Ytyknvt9sy40PZCJC07Nl7ZAbV4wBZABuQSsrdpovZAlaZCLRZCp24zyGezd2wDbJoG4PIYtfv5Xxzx9qUbhEGb6dOVt0T2bcsA79JEcbKLRDhb5p6YRP3Xmk4oN0XMAdZBXhCa1Y0jLrvGBciLBP8Ht99KeIX55Eybmp0Fz8DKrCjkLg87EZAz0WYxeZAZBQw85DZAft5a2FwFK8oZBUtPZC3SV1EwZDZD');
+define('META_PAGE_ID',      '112942227032735');
+define('META_ACCESS_TOKEN', 'EAAT7USCesj8BRG8gaFDZAZAKs8kZCabYZAJRB1cx1yFf2VDFt499po767PrJbRLByIwnF8jecJ41WsZBzYbBipoctZAebibDOscinZA5Rh3rIx3cWMYHzXltTLj71r2PJWNmrZAlFy2pXIWwrLk8pa3Y5I6iS5dHcMgZBZAxbiKyt5KN9hqu5o5KbJvNfiHT31lcELuAZBLX7WtqFykM57zsjuwf5FP5XaMOF2NCDEkgOHmR7cNRAZDZD');
 define('META_API_VERSION',  'v19.0');
 define('META_BASE',         'https://graph.facebook.com/' . META_API_VERSION);
 define('POSTS_LIMIT',       25);
